@@ -1,4 +1,4 @@
-# @macp/openclaw-plugin
+# macp-openclaw-plugin
 
 Native [MACP](https://github.com/multiagentcognition/macp) multi-agent coordination plugin for [OpenClaw](https://openclaw.ai).
 
@@ -88,7 +88,7 @@ The plugin does not disable or replace any OpenClaw native features.
 ## Install
 
 ```bash
-openclaw plugins install @macp/openclaw-plugin
+openclaw plugins install macp-openclaw-plugin
 ```
 
 ## Configure

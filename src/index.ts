@@ -4,7 +4,7 @@ import { registerAllTools } from './tools.js';
 import type { OpenClawPluginApi, PluginConfig } from './types.js';
 
 /**
- * @macp/openclaw-plugin — Native MACP multi-agent coordination for OpenClaw.
+ * macp-openclaw-plugin — Native MACP multi-agent coordination for OpenClaw.
  *
  * This plugin embeds MACPCore, MACPExtensions, and MACPExtensionsAdvanced
  * directly into the OpenClaw Gateway process, providing 42 MACP tools
