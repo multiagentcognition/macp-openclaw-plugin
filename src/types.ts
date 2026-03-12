@@ -5,7 +5,6 @@ export interface PluginConfig {
   projectId: string;
   dbPath?: string;
   defaultChannel: string;
-  pollIntervalMs: number;
   autoPollInject: boolean;
   bridgeChannels: boolean;
   bridgeChannelPriority: number;

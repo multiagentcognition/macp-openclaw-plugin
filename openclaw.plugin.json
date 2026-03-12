@@ -20,14 +20,9 @@
         "default": "general",
         "description": "Channel all agents auto-join on startup"
       },
-      "pollIntervalMs": {
-        "type": "number",
-        "default": 5000,
-        "description": "How often to poll MACP bus for deliveries (ms)"
-      },
       "autoPollInject": {
         "type": "boolean",
-        "default": true,
+        "default": false,
         "description": "Auto-inject MACP deliveries into agent context"
       },
       "bridgeChannels": {
@@ -56,10 +51,6 @@
     "defaultChannel": {
       "label": "Default Channel",
       "placeholder": "general"
-    },
-    "pollIntervalMs": {
-      "label": "Poll Interval (ms)",
-      "placeholder": "5000"
     }
   }
 }

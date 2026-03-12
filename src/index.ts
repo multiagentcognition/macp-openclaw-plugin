@@ -7,23 +7,21 @@ import type { OpenClawPluginApi, PluginConfig } from './types.js';
  * @macp/openclaw-plugin — Native MACP multi-agent coordination for OpenClaw.
  *
  * This plugin embeds MACPCore, MACPExtensions, and MACPExtensionsAdvanced
- * directly into the OpenClaw Gateway process, providing all 47 MACP tools
+ * directly into the OpenClaw Gateway process, providing 42 MACP tools
  * to every agent without the overhead of a separate MCP server process.
  *
  * Lifecycle:
  *   Gateway start  → MACPService.start() opens the shared SQLite DB
  *   Agent bootstrap → auto-register agent + join default channel
- *   Agent turn      → poll deliveries, inject into context
- *   Agent stop      → auto-deregister agent
- *   Gateway stop    → MACPService.stop() closes DB cleanly
+ *   Bootstrap hook  → optionally poll and inject deliveries into context
+ *   Gateway stop    → deregister tracked agents and close the DB cleanly
  */
 export default function register(api: OpenClawPluginApi): void {
   const config: PluginConfig = {
     projectId: api.config.projectId,
     dbPath: api.config.dbPath,
     defaultChannel: api.config.defaultChannel ?? 'general',
-    pollIntervalMs: api.config.pollIntervalMs ?? 5000,
-    autoPollInject: api.config.autoPollInject ?? true,
+    autoPollInject: api.config.autoPollInject ?? false,
     bridgeChannels: api.config.bridgeChannels ?? false,
     bridgeChannelPriority: api.config.bridgeChannelPriority ?? 0,
   };
@@ -57,7 +55,7 @@ export default function register(api: OpenClawPluginApi): void {
     },
   });
 
-  // ── Register all 47 MACP tools ─────────────────────────────
+  // ── Register all 42 exposed MACP tools ─────────────────────
 
   registerAllTools(api, service);
 
@@ -81,7 +79,11 @@ export default function register(api: OpenClawPluginApi): void {
     { name: 'macp.agent-register', description: 'Auto-register agents with MACP on bootstrap' },
   );
 
-  // Inject MACP deliveries into agent context
+  // Inject MACP deliveries into agent context.
+  // NOTE: This assumes agent:bootstrap fires per run/turn, not just once
+  // per agent lifecycle.  If OpenClaw fires it only once, this feature
+  // provides initial context only — agents should still call macp_poll
+  // explicitly during their turns for ongoing awareness.
   if (config.autoPollInject) {
     api.registerHook(
       'agent:bootstrap',
@@ -89,10 +91,14 @@ export default function register(api: OpenClawPluginApi): void {
         const ev = event as { agentId?: string; context?: { append?: (text: string) => void } };
         if (!ev.agentId || !ev.context?.append) return;
 
-        const deliveries = service.getAndClearDeliveries(ev.agentId);
-        if (deliveries.length > 0) {
-          const contextBlock = service.formatDeliveriesAsContext(deliveries);
-          ev.context.append(contextBlock);
+        try {
+          const deliveries = service.pollForAgent(ev.agentId);
+          if (deliveries.length > 0) {
+            const contextBlock = service.formatDeliveriesAsContext(deliveries);
+            ev.context.append(contextBlock);
+          }
+        } catch {
+          // Non-fatal — agent may not be registered yet
         }
       },
       { name: 'macp.context-inject', description: 'Inject MACP deliveries into agent context' },

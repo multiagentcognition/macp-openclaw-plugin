@@ -33,7 +33,7 @@ same project.
 | Tool | Purpose |
 |------|---------|
 | `macp_ext_list_agents` | See who else is online |
-| `macp_ext_get_session_context` | Get detailed session info for an agent |
+| `macp_ext_get_session_context` | Get detailed context for the current MACP session |
 
 ### File ownership
 
@@ -52,7 +52,7 @@ same project.
 | `macp_ext_search_memory` | Search shared knowledge across agents |
 | `macp_ext_list_memories` | List all memories |
 | `macp_ext_delete_memory` | Remove a memory entry |
-| `macp_ext_resolve_memory` | Cascading read: agent -> channel -> workspace |
+| `macp_ext_resolve_memory` | Resolve conflicting memories by writing the chosen value |
 
 ### Profiles
 
@@ -61,7 +61,7 @@ same project.
 | `macp_ext_register_profile` | Register a reusable role definition |
 | `macp_ext_get_profile` | Get a profile by slug |
 | `macp_ext_list_profiles` | List all profiles |
-| `macp_ext_find_profiles` | Find profiles matching skills or tags |
+| `macp_ext_find_profiles` | Find profiles by skill tag |
 
 ### Goals
 
@@ -70,7 +70,7 @@ same project.
 | `macp_ext_create_goal` | Create a hierarchical goal |
 | `macp_ext_list_goals` | List goals |
 | `macp_ext_get_goal` | Get a goal by ID |
-| `macp_ext_update_goal` | Update goal state or progress |
+| `macp_ext_update_goal` | Update goal title, description, or status |
 | `macp_ext_get_goal_cascade` | Get goal with all children and linked tasks |
 
 ### Tasks
@@ -91,9 +91,9 @@ same project.
 
 | Tool | Purpose |
 |------|---------|
-| `macp_ext_sleep_agent` | Put an agent to sleep (keeps registration) |
-| `macp_ext_deactivate_agent` | Deactivate an agent (deregisters session) |
-| `macp_ext_delete_agent` | Permanently delete an agent |
+| `macp_ext_sleep_agent` | Put the current agent to sleep (keeps registration) |
+| `macp_ext_deactivate_agent` | Deactivate the current agent (deregisters session) |
+| `macp_ext_delete_agent` | Delete the current agent from workspace state |
 
 ### Vault / documents
 

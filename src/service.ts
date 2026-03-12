@@ -12,8 +12,13 @@ import type { PluginConfig, AgentSession } from './types.js';
  *
  * Manages a single MACPCore + MACPExtensions + MACPExtensionsAdvanced
  * instance shared across all OpenClaw agents in this Gateway.  Handles
- * agent registration/deregistration, background polling, and delivery
- * buffering for context injection.
+ * agent registration/deregistration and on-demand polling.
+ *
+ * Polling is intentionally on-demand (not timer-based).  MACP's poll()
+ * mutates delivery state (marks surfaced, records ACKs), so calling it
+ * before the agent explicitly asks for messages would change protocol
+ * semantics.  Agents poll via macp_poll or the optional autoPollInject
+ * hook, both of which are agent-initiated.
  */
 export class MACPService {
   private core: MacpCore | null = null;
@@ -21,8 +26,6 @@ export class MACPService {
   private adv: MacpWorkspaceExtensionsAdvanced | null = null;
   private config: PluginConfig;
   private agentSessions = new Map<string, AgentSession>();
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private pendingDeliveries = new Map<string, unknown[]>();
 
   constructor(config: PluginConfig) {
     this.config = config;
@@ -38,16 +41,9 @@ export class MACPService {
     this.core = new MacpCore({ dbPath });
     this.ext = new MacpWorkspaceExtensions({ dbPath });
     this.adv = new MacpWorkspaceExtensionsAdvanced({ dbPath });
-
-    this.pollTimer = setInterval(() => this.pollAll(), this.config.pollIntervalMs);
   }
 
   async stop(): Promise<void> {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
-
     for (const agentId of this.agentSessions.keys()) {
       this.deregisterAgent(agentId);
     }
@@ -134,35 +130,20 @@ export class MACPService {
     }
 
     this.agentSessions.delete(agentId);
-    this.pendingDeliveries.delete(agentId);
   }
 
-  // ── Polling ──────────────────────────────────────────────────
-
-  private pollAll(): void {
-    if (!this.core) return;
-
-    for (const agentId of this.agentSessions.keys()) {
-      try {
-        const result = this.core.poll({ agentId });
-        if (result.deliveries.length > 0) {
-          const existing = this.pendingDeliveries.get(agentId) ?? [];
-          this.pendingDeliveries.set(agentId, [...existing, ...result.deliveries]);
-        }
-      } catch {
-        // Non-fatal — will retry next tick
-      }
-    }
-  }
+  // ── On-demand Polling ──────────────────────────────────────────
 
   /**
-   * Retrieve and clear buffered deliveries for an agent.
-   * Called during context assembly to inject messages into the prompt.
+   * Poll deliveries for a specific agent on demand.
+   * This is the correct way to retrieve deliveries — it calls poll()
+   * only when the agent is ready to see the results, preserving
+   * MACP's surfaced/ACK semantics.
    */
-  getAndClearDeliveries(agentId: string): unknown[] {
-    const deliveries = this.pendingDeliveries.get(agentId) ?? [];
-    this.pendingDeliveries.delete(agentId);
-    return deliveries;
+  pollForAgent(agentId: string): unknown[] {
+    const core = this.requireCore();
+    const result = core.poll({ agentId });
+    return result.deliveries;
   }
 
   /**
@@ -222,20 +203,33 @@ export class MACPService {
 
   /**
    * Resolve a session from an explicit agentId parameter or fall
-   * back to the default session.  Throws if no session is found.
+   * back to the default session.
+   *
+   * When exactly one agent is registered, agentId may be omitted.
+   * When multiple agents are registered, agentId is required —
+   * this prevents an LLM omission from silently mutating or
+   * polling the wrong agent's MACP state.
    */
   resolveSession(agentId?: string): AgentSession {
-    const session = agentId
-      ? this.agentSessions.get(agentId)
-      : this.getDefaultSession();
-    if (!session) {
+    if (agentId) {
+      const session = this.agentSessions.get(agentId);
+      if (!session) {
+        throw new Error(`Agent ${agentId} not registered with MACP`);
+      }
+      return session;
+    }
+
+    if (this.agentSessions.size === 0) {
+      throw new Error('No MACP agent session available');
+    }
+
+    if (this.agentSessions.size > 1) {
       throw new Error(
-        agentId
-          ? `Agent ${agentId} not registered with MACP`
-          : 'No MACP agent session available',
+        'Multiple agents registered — agentId is required to avoid session ambiguity',
       );
     }
-    return session;
+
+    return this.agentSessions.values().next().value!;
   }
 
   getConfig(): PluginConfig {

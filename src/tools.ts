@@ -1,4 +1,5 @@
 import type {
+  AckLevel,
   GoalStatus,
   GoalType,
   MemoryEntry,
@@ -48,38 +49,12 @@ const QUERY_SOURCE_KIND_MAP = {
 type QuerySource = keyof typeof QUERY_SOURCE_KIND_MAP;
 type QueryKind = (typeof QUERY_SOURCE_KIND_MAP)[QuerySource];
 type ArchiveableTaskStatus = Extract<TaskStatus, 'done' | 'cancelled'>;
+type MessageContentType = 'text/plain' | 'application/json';
 
 function resolvePriority(value: unknown): Priority | PriorityAlias {
   if (typeof value === 'number' && value >= 0 && value <= 3) return value as Priority;
   if (typeof value === 'string' && value in PRIORITY_MAP) return value as PriorityAlias;
-  return 'info';
-}
-
-function slugify(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-function normalizeProfileSkills(value: unknown): Array<{ id: string; name: string; tags?: string[] }> | undefined {
-  if (!Array.isArray(value)) return undefined;
-
-  const skills = value
-    .filter((entry): entry is string => typeof entry === 'string')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-    .map((entry) => {
-      const tag = slugify(entry);
-      return {
-        id: tag || entry.toLowerCase(),
-        name: entry,
-        tags: tag ? [tag] : undefined,
-      };
-    });
-
-  return skills.length > 0 ? skills : undefined;
+  return 'advisory';
 }
 
 function filterByLayer(
@@ -92,19 +67,22 @@ function filterByLayer(
   };
 }
 
-function pickSkillTag(params: Record<string, unknown>): string | undefined {
-  if (typeof params.skillTag === 'string' && params.skillTag.trim().length > 0) {
-    return params.skillTag.trim();
+function resolveChannelId(service: MACPService, channelId: unknown): string {
+  const resolved = typeof channelId === 'string' && channelId.trim().length > 0
+    ? channelId
+    : service.getConfig().defaultChannel;
+
+  if (!resolved) {
+    throw new Error('channelId is required when no default channel is configured.');
   }
 
-  const candidates = [params.skills, params.tags];
-  for (const candidate of candidates) {
-    if (!Array.isArray(candidate)) continue;
-    const match = candidate.find((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
-    if (match) return match.trim();
-  }
+  return resolved;
+}
 
-  return undefined;
+function resolveScopedChannelId(service: MACPService, channelId: unknown): string | undefined {
+  return typeof channelId === 'string' && channelId.trim().length > 0
+    ? channelId
+    : service.getConfig().defaultChannel || undefined;
 }
 
 function filterQueryContextSources(
@@ -131,7 +109,7 @@ function filterQueryContextSources(
 // ---------------------------------------------------------------------------
 
 /**
- * Register all 47 MACP tools with the OpenClaw plugin API.
+ * Register the 42 MACP tools exposed to OpenClaw agents.
  *
  * Tools are grouped by category.  Each tool delegates to the shared
  * MACPService which manages the underlying MACPCore, MACPExtensions,
@@ -150,10 +128,9 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
-        channelId: { type: 'string', description: 'Channel to join' },
+        channelId: { type: 'string', description: 'Optional — defaults to the plugin default channel' },
         agentId: { type: 'string', description: 'Optional — override calling agent' },
       },
-      required: ['channelId'],
     },
     async execute(_id, params) {
       try {
@@ -161,7 +138,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
         const result = service.requireCore().joinChannel({
           agentId: session.agentId,
           sessionId: session.sessionId,
-          channelId: params.channelId as string,
+          channelId: resolveChannelId(service, params.channelId),
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -176,22 +153,42 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       properties: {
         channelId: { type: 'string', description: 'Target channel' },
         content: { type: 'string', description: 'Message content' },
-        priority: { type: 'string', enum: ['info', 'advisory', 'steering', 'interrupt'], default: 'info' },
-        type: { type: 'string', default: 'discovery', description: 'Message type tag' },
+        priority: {
+          oneOf: [
+            { type: 'number', enum: [0, 1, 2, 3] },
+            { type: 'string', enum: ['info', 'advisory', 'steering', 'interrupt'] },
+          ],
+          default: 'advisory',
+        },
+        type: { type: 'string', description: 'Message type tag' },
+        relevanceTags: { type: 'array', items: { type: 'string' } },
+        confidence: { type: 'number', minimum: 0, maximum: 1 },
+        sourceReferences: { type: 'array', items: { type: 'string' } },
         ttlSeconds: { type: 'number', description: 'Time-to-live in seconds' },
+        contentType: { type: 'string', enum: ['text/plain', 'application/json'] },
+        ackLevel: { type: 'string', enum: ['queued', 'received', 'processed'] },
         agentId: { type: 'string', description: 'Optional — override calling agent' },
       },
-      required: ['channelId', 'content'],
+      required: ['content'],
     },
     async execute(_id, params) {
       try {
         const session = service.resolveSession(params.agentId as string | undefined);
         const result = service.requireCore().sendChannel({
           from: senderFrom(session),
-          channelId: params.channelId as string,
+          channelId: resolveChannelId(service, params.channelId),
           content: params.content as string,
-          priority: resolvePriority(params.priority),
-          type: (params.type as string) ?? 'discovery',
+          priority: params.priority === undefined ? undefined : resolvePriority(params.priority),
+          type: params.type as string | undefined,
+          contentType: params.contentType as MessageContentType | undefined,
+          context: {
+            relevanceTags: params.relevanceTags as string[] | undefined,
+            confidence: params.confidence as number | undefined,
+            sourceReferences: params.sourceReferences as string[] | undefined,
+          },
+          ack: {
+            requestLevel: params.ackLevel as AckLevel | undefined,
+          },
           ttlSeconds: params.ttlSeconds as number | undefined,
         });
         return ok(result);
@@ -207,9 +204,20 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       properties: {
         destinationAgentId: { type: 'string', description: 'Target agent ID' },
         content: { type: 'string', description: 'Message content' },
-        priority: { type: 'string', enum: ['info', 'advisory', 'steering', 'interrupt'], default: 'info' },
-        type: { type: 'string', default: 'discovery' },
+        priority: {
+          oneOf: [
+            { type: 'number', enum: [0, 1, 2, 3] },
+            { type: 'string', enum: ['info', 'advisory', 'steering', 'interrupt'] },
+          ],
+          default: 'advisory',
+        },
+        type: { type: 'string' },
+        relevanceTags: { type: 'array', items: { type: 'string' } },
+        confidence: { type: 'number', minimum: 0, maximum: 1 },
+        sourceReferences: { type: 'array', items: { type: 'string' } },
         ttlSeconds: { type: 'number' },
+        contentType: { type: 'string', enum: ['text/plain', 'application/json'] },
+        ackLevel: { type: 'string', enum: ['queued', 'received', 'processed'] },
         agentId: { type: 'string', description: 'Optional — override calling agent' },
       },
       required: ['destinationAgentId', 'content'],
@@ -221,8 +229,17 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           from: senderFrom(session),
           destinationAgentId: params.destinationAgentId as string,
           content: params.content as string,
-          priority: resolvePriority(params.priority),
-          type: (params.type as string) ?? 'discovery',
+          priority: params.priority === undefined ? undefined : resolvePriority(params.priority),
+          type: params.type as string | undefined,
+          contentType: params.contentType as MessageContentType | undefined,
+          context: {
+            relevanceTags: params.relevanceTags as string[] | undefined,
+            confidence: params.confidence as number | undefined,
+            sourceReferences: params.sourceReferences as string[] | undefined,
+          },
+          ack: {
+            requestLevel: params.ackLevel as AckLevel | undefined,
+          },
           ttlSeconds: params.ttlSeconds as number | undefined,
         });
         return ok(result);
@@ -236,13 +253,23 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
+        minPriority: { type: 'number', enum: [0, 1, 2, 3] },
+        maxMessages: { type: 'number' },
+        applyBudgetPruning: { type: 'boolean' },
+        budgetBytes: { type: 'number' },
         agentId: { type: 'string', description: 'Optional — override calling agent' },
       },
     },
     async execute(_id, params) {
       try {
         const session = service.resolveSession(params.agentId as string | undefined);
-        const result = service.requireCore().poll({ agentId: session.agentId });
+        const result = service.requireCore().poll({
+          agentId: session.agentId,
+          minPriority: params.minPriority as Priority | undefined,
+          maxMessages: params.maxMessages as number | undefined,
+          applyBudgetPruning: params.applyBudgetPruning as boolean | undefined,
+          budgetBytes: params.budgetBytes as number | undefined,
+        });
         return ok(result);
       } catch (e) { return err(String(e)); }
     },
@@ -286,19 +313,19 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
-        targetAgentId: { type: 'string', description: 'Agent to inspect' },
+        channelId: { type: 'string', description: 'Optional — defaults to the plugin default channel' },
+        pendingLimit: { type: 'number' },
         agentId: { type: 'string', description: 'Optional — calling agent' },
       },
-      required: ['targetAgentId'],
     },
     async execute(_id, params) {
       try {
-        const targetSession = service.resolveSession(
-          (params.targetAgentId as string | undefined) ?? (params.agentId as string | undefined),
-        );
+        const session = service.resolveSession(params.agentId as string | undefined);
         const result = service.requireExt().getSessionContext({
-          agentId: targetSession.agentId,
-          sessionId: targetSession.sessionId,
+          agentId: session.agentId,
+          sessionId: session.sessionId,
+          channelId: resolveScopedChannelId(service, params.channelId),
+          pendingLimit: params.pendingLimit as number | undefined,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -313,12 +340,12 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
-        filePaths: { type: 'array', items: { type: 'string' }, description: 'Files to claim' },
+        files: { type: 'array', items: { type: 'string' }, description: 'Files to claim' },
         reason: { type: 'string', description: 'Why you need these files' },
         ttlSeconds: { type: 'number', description: 'Claim duration (default 1800)' },
         agentId: { type: 'string' },
       },
-      required: ['filePaths'],
+      required: ['files'],
     },
     async execute(_id, params) {
       try {
@@ -326,7 +353,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
         const result = service.requireExt().claimFiles({
           agentId: session.agentId,
           sessionId: session.sessionId,
-          files: params.filePaths as string[],
+          files: params.files as string[],
           reason: params.reason as string | undefined,
           ttlSeconds: params.ttlSeconds as number | undefined,
         });
@@ -341,30 +368,19 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
-        claimId: { type: 'string', description: 'Claim ID to release' },
+        files: { type: 'array', items: { type: 'string' }, description: 'Files to release' },
         reason: { type: 'string', description: 'Optional release note' },
         agentId: { type: 'string' },
       },
-      required: ['claimId'],
+      required: ['files'],
     },
     async execute(_id, params) {
       try {
         const session = service.resolveSession(params.agentId as string | undefined);
-        const files = service
-          .requireExt()
-          .listFileClaims({ agentId: session.agentId })
-          .claims
-          .filter((claim) => claim.claimId === (params.claimId as string))
-          .map((claim) => claim.filePath);
-
-        if (files.length === 0) {
-          throw new Error(`Claim ${(params.claimId as string)} was not found for agent ${session.agentId}`);
-        }
-
         const result = service.requireExt().releaseFiles({
           agentId: session.agentId,
           sessionId: session.sessionId,
-          files,
+          files: params.files as string[],
           reason: params.reason as string | undefined,
         });
         return ok(result);
@@ -378,15 +394,16 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
-        filePath: { type: 'string', description: 'Filter by file path' },
+        files: { type: 'array', items: { type: 'string' }, description: 'Filter by file path' },
+        claimAgentId: { type: 'string', description: 'Filter claims by agent id' },
       },
     },
     async execute(_id, params) {
       try {
-        const filePath = params.filePath as string | undefined;
-        const result = service.requireExt().listFileClaims(
-          filePath ? { files: [filePath] } : undefined,
-        );
+        const result = service.requireExt().listFileClaims({
+          agentId: params.claimAgentId as string | undefined,
+          files: params.files as string[] | undefined,
+        });
         return ok(result);
       } catch (e) { return err(String(e)); }
     },
@@ -409,7 +426,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
         channelId: { type: 'string', description: 'Required when scope=channel' },
         agentId: { type: 'string' },
       },
-      required: ['key', 'value'],
+      required: ['key', 'value', 'scope'],
     },
     async execute(_id, params) {
       try {
@@ -419,11 +436,11 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           sessionId: session.sessionId,
           key: params.key as string,
           value: params.value as string,
-          scope: (params.scope as MemoryScope | undefined) ?? 'workspace',
+          scope: params.scope as MemoryScope,
           layer: (params.layer as MemoryLayer | undefined) ?? 'context',
           confidence: (params.confidence as MemoryConfidence | undefined) ?? 'stated',
           tags: params.tags as string[] | undefined,
-          channelId: params.channelId as string | undefined,
+          channelId: resolveScopedChannelId(service, params.channelId),
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -451,7 +468,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           sessionId: session.sessionId,
           key: params.key as string,
           scope: params.scope as MemoryScope | undefined,
-          channelId: params.channelId as string | undefined,
+          channelId: resolveScopedChannelId(service, params.channelId),
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -482,7 +499,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           sessionId: session.sessionId,
           query: params.query as string,
           scope: params.scope as MemoryScope | undefined,
-          channelId: params.channelId as string | undefined,
+          channelId: resolveScopedChannelId(service, params.channelId),
           tags: params.tags as string[] | undefined,
           limit: params.limit as number | undefined,
         }), params.layer as MemoryLayer | undefined);
@@ -512,7 +529,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           agentId: session.agentId,
           sessionId: session.sessionId,
           scope: params.scope as MemoryScope | undefined,
-          channelId: params.channelId as string | undefined,
+          channelId: resolveScopedChannelId(service, params.channelId),
           tags: params.tags as string[] | undefined,
           limit: params.limit as number | undefined,
         }), params.layer as MemoryLayer | undefined);
@@ -542,7 +559,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           sessionId: session.sessionId,
           key: params.key as string,
           scope: params.scope as MemoryScope,
-          channelId: params.channelId as string | undefined,
+          channelId: resolveScopedChannelId(service, params.channelId),
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -575,7 +592,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           key: params.key as string,
           scope: params.scope as MemoryScope,
           chosenValue: params.chosenValue as string,
-          channelId: params.channelId as string | undefined,
+          channelId: resolveScopedChannelId(service, params.channelId),
           tags: params.tags as string[] | undefined,
           confidence: params.confidence as MemoryConfidence | undefined,
           layer: params.layer as MemoryLayer | undefined,
@@ -594,33 +611,39 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       type: 'object',
       properties: {
         slug: { type: 'string', description: 'Profile identifier (e.g. "researcher")' },
-        displayName: { type: 'string' },
-        description: { type: 'string' },
+        name: { type: 'string' },
         role: { type: 'string' },
         contextPack: { type: 'string' },
-        skills: { type: 'array', items: { type: 'string' } },
+        skills: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              tags: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['id', 'name'],
+          },
+        },
         memoryKeys: { type: 'array', items: { type: 'string' } },
-        memoryHints: { type: 'array', items: { type: 'string' } },
         vaultPaths: { type: 'array', items: { type: 'string' } },
         agentId: { type: 'string' },
       },
-      required: ['slug', 'displayName'],
+      required: ['slug', 'name', 'role'],
     },
     async execute(_id, params) {
       try {
         const session = service.resolveSession(params.agentId as string | undefined);
-        const displayName = params.displayName as string;
         const result = service.requireAdv().registerProfile({
           agentId: session.agentId,
           sessionId: session.sessionId,
           slug: params.slug as string,
-          name: displayName,
-          role: (params.role as string | undefined) ?? displayName,
-          contextPack:
-            (params.contextPack as string | undefined) ?? (params.description as string | undefined),
-          skills: normalizeProfileSkills(params.skills),
-          memoryKeys:
-            (params.memoryKeys as string[] | undefined) ?? (params.memoryHints as string[] | undefined),
+          name: params.name as string,
+          role: params.role as string,
+          contextPack: params.contextPack as string | undefined,
+          skills: params.skills as Array<{ id: string; name: string; tags?: string[] }> | undefined,
+          memoryKeys: params.memoryKeys as string[] | undefined,
           vaultPaths: params.vaultPaths as string[] | undefined,
         });
         return ok(result);
@@ -680,22 +703,17 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       type: 'object',
       properties: {
         skillTag: { type: 'string', description: 'Skill tag to match against profile skill tags' },
-        skills: { type: 'array', items: { type: 'string' } },
-        tags: { type: 'array', items: { type: 'string' } },
         agentId: { type: 'string' },
       },
+      required: ['skillTag'],
     },
     async execute(_id, params) {
       try {
         const session = service.resolveSession(params.agentId as string | undefined);
-        const skillTag = pickSkillTag(params);
-        if (!skillTag) {
-          throw new Error('skillTag is required');
-        }
         const result = service.requireAdv().findProfiles({
           agentId: session.agentId,
           sessionId: session.sessionId,
-          skillTag,
+          skillTag: params.skillTag as string,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -714,6 +732,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
         description: { type: 'string' },
         type: { type: 'string', enum: ['mission', 'project_goal', 'agent_goal'] },
         parentGoalId: { type: 'string', description: 'Parent goal for nesting' },
+        ownerAgentId: { type: 'string', description: 'Optional goal owner' },
         agentId: { type: 'string' },
       },
       required: ['title', 'type'],
@@ -728,6 +747,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           description: params.description as string | undefined,
           type: params.type as GoalType,
           parentGoalId: params.parentGoalId as string | undefined,
+          ownerAgentId: params.ownerAgentId as string | undefined,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -742,6 +762,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       properties: {
         type: { type: 'string', enum: ['mission', 'project_goal', 'agent_goal'] },
         status: { type: 'string', enum: ['active', 'completed', 'paused'] },
+        ownerAgentId: { type: 'string' },
         agentId: { type: 'string' },
       },
     },
@@ -753,6 +774,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           sessionId: session.sessionId,
           type: params.type as GoalType | undefined,
           status: params.status as GoalStatus | undefined,
+          ownerAgentId: params.ownerAgentId as string | undefined,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -852,6 +874,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
         profileHint: { type: 'string', description: 'Suggested agent profile/role' },
         profileSlug: { type: 'string', description: 'Profile slug required by MACP advanced tasks' },
         goalId: { type: 'string', description: 'Link to a goal' },
+        parentTaskId: { type: 'string', description: 'Parent task for nesting' },
         agentId: { type: 'string' },
       },
       required: ['title'],
@@ -868,6 +891,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           profileSlug:
             (params.profileSlug as string | undefined) ?? (params.profileHint as string | undefined),
           goalId: params.goalId as string | undefined,
+          parentTaskId: params.parentTaskId as string | undefined,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -881,6 +905,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       type: 'object',
       properties: {
         taskId: { type: 'string' },
+        includeSubtasks: { type: 'boolean' },
         agentId: { type: 'string' },
       },
       required: ['taskId'],
@@ -1019,6 +1044,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           agentId: session.agentId,
           sessionId: session.sessionId,
           taskId: params.taskId as string,
+          includeSubtasks: params.includeSubtasks as boolean | undefined,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -1032,9 +1058,11 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       type: 'object',
       properties: {
         status: { type: 'string', enum: ['pending', 'accepted', 'in-progress', 'done', 'blocked', 'cancelled'] },
+        profileSlug: { type: 'string' },
+        priority: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] },
         assignedAgentId: { type: 'string' },
-        assigneeAgentId: { type: 'string' },
         goalId: { type: 'string' },
+        limit: { type: 'number' },
         agentId: { type: 'string' },
       },
     },
@@ -1045,9 +1073,11 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           agentId: session.agentId,
           sessionId: session.sessionId,
           status: params.status as TaskStatus | undefined,
-          assignedAgentId:
-            (params.assignedAgentId as string | undefined) ?? (params.assigneeAgentId as string | undefined),
+          profileSlug: params.profileSlug as string | undefined,
+          priority: params.priority as TaskPriority | undefined,
+          assignedAgentId: params.assignedAgentId as string | undefined,
           goalId: params.goalId as string | undefined,
+          limit: params.limit as number | undefined,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -1062,15 +1092,11 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       properties: {
         status: { type: 'string', enum: ['done', 'cancelled'], default: 'done' },
         goalId: { type: 'string' },
-        olderThanDays: { type: 'number', description: 'Unsupported legacy field' },
         agentId: { type: 'string' },
       },
     },
     async execute(_id, params) {
       try {
-        if (params.olderThanDays !== undefined) {
-          throw new Error('olderThanDays is not supported by macp-mcp 2.1.0; use status/goalId instead');
-        }
         const session = service.resolveSession(params.agentId as string | undefined);
         const result = service.requireAdv().archiveTasks({
           agentId: session.agentId,
@@ -1091,15 +1117,13 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
-        targetAgentId: { type: 'string', description: 'Agent to put to sleep' },
         reason: { type: 'string' },
         agentId: { type: 'string' },
       },
-      required: ['targetAgentId'],
     },
     async execute(_id, params) {
       try {
-        const session = service.resolveSession(params.targetAgentId as string | undefined);
+        const session = service.resolveSession(params.agentId as string | undefined);
         const result = service.requireAdv().sleepAgent({
           agentId: session.agentId,
           sessionId: session.sessionId,
@@ -1116,15 +1140,13 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
-        targetAgentId: { type: 'string' },
         reason: { type: 'string' },
         agentId: { type: 'string' },
       },
-      required: ['targetAgentId'],
     },
     async execute(_id, params) {
       try {
-        const session = service.resolveSession(params.targetAgentId as string | undefined);
+        const session = service.resolveSession(params.agentId as string | undefined);
         const result = service.requireAdv().deactivateAgent({
           agentId: session.agentId,
           sessionId: session.sessionId,
@@ -1141,15 +1163,13 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
-        targetAgentId: { type: 'string' },
         reason: { type: 'string' },
         agentId: { type: 'string' },
       },
-      required: ['targetAgentId'],
     },
     async execute(_id, params) {
       try {
-        const session = service.resolveSession(params.targetAgentId as string | undefined);
+        const session = service.resolveSession(params.agentId as string | undefined);
         const result = service.requireAdv().deleteAgent({
           agentId: session.agentId,
           sessionId: session.sessionId,
@@ -1169,10 +1189,9 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Directory path to index' },
-        rootPath: { type: 'string', description: 'Directory path to index' },
         agentId: { type: 'string' },
       },
-      required: ['rootPath'],
+      required: ['path'],
     },
     async execute(_id, params) {
       try {
@@ -1180,7 +1199,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
         const result = service.requireAdv().registerVault({
           agentId: session.agentId,
           sessionId: session.sessionId,
-          path: (params.path as string | undefined) ?? (params.rootPath as string),
+          path: params.path as string,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -1194,6 +1213,8 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       type: 'object',
       properties: {
         query: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        limit: { type: 'number' },
         agentId: { type: 'string' },
       },
       required: ['query'],
@@ -1205,6 +1226,8 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           agentId: session.agentId,
           sessionId: session.sessionId,
           query: params.query as string,
+          tags: params.tags as string[] | undefined,
+          limit: params.limit as number | undefined,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -1218,10 +1241,9 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
       type: 'object',
       properties: {
         path: { type: 'string' },
-        docPath: { type: 'string' },
         agentId: { type: 'string' },
       },
-      required: ['docPath'],
+      required: ['path'],
     },
     async execute(_id, params) {
       try {
@@ -1229,7 +1251,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
         const result = service.requireAdv().getVaultDoc({
           agentId: session.agentId,
           sessionId: session.sessionId,
-          path: (params.path as string | undefined) ?? (params.docPath as string),
+          path: params.path as string,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -1242,6 +1264,8 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
     parameters: {
       type: 'object',
       properties: {
+        tags: { type: 'array', items: { type: 'string' } },
+        limit: { type: 'number' },
         agentId: { type: 'string' },
       },
     },
@@ -1251,6 +1275,8 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
         const result = service.requireAdv().listVaultDocs({
           agentId: session.agentId,
           sessionId: session.sessionId,
+          tags: params.tags as string[] | undefined,
+          limit: params.limit as number | undefined,
         });
         return ok(result);
       } catch (e) { return err(String(e)); }
@@ -1284,7 +1310,7 @@ export function registerAllTools(api: OpenClawPluginApi, service: MACPService): 
           agentId: session.agentId,
           sessionId: session.sessionId,
           query: params.query as string,
-          channelId: params.channelId as string | undefined,
+          channelId: resolveScopedChannelId(service, params.channelId),
           limit: params.limit as number | undefined,
         }), params.sources);
         return ok(result);

@@ -132,9 +132,8 @@ Full options:
           // Channels
           "defaultChannel": "general",
 
-          // Polling
-          "pollIntervalMs": 5000,
-          "autoPollInject": true,
+          // Context injection (polls on-demand at bootstrap, off by default)
+          "autoPollInject": false,
 
           // Channel bridge (forward WhatsApp/Slack/Telegram → MACP bus)
           "bridgeChannels": false,
@@ -150,15 +149,13 @@ Full options:
 
 1. Gateway starts → plugin opens the shared SQLite DB
 2. Each OpenClaw agent bootstraps → auto-registered with MACP, joins default channel, announces presence
-3. Background poll runs every `pollIntervalMs` → buffers deliveries
-4. Agent turn starts → buffered deliveries injected into context as `<macp-deliveries>` block
-5. Agent uses MACP tools during its turn (send, claim files, dispatch tasks, etc.)
-6. Agent session ends → auto-deregistered from MACP
-7. Gateway stops → all agents deregistered, DB closed cleanly
+3. If `autoPollInject` is enabled, the bootstrap hook polls on-demand and injects deliveries as a `<macp-deliveries>` block
+4. Agents use MACP tools during their turns (send, claim files, dispatch tasks, poll, etc.)
+5. Gateway stops → tracked agents deregister and the DB closes cleanly
 
-## Tools (47)
+## Tools (42 exposed)
 
-All 47 MACP tools are registered with the OpenClaw agent tool system:
+The plugin exposes 42 MACP tools to OpenClaw agents:
 
 **Core protocol (5)** — `macp_join_channel`, `macp_send_channel`, `macp_send_direct`, `macp_poll`, `macp_ack`
 
@@ -180,7 +177,7 @@ All 47 MACP tools are registered with the OpenClaw agent tool system:
 
 **Context search (1)** — `macp_ext_query_context`
 
-Additionally, 3 core protocol operations are handled automatically by the plugin lifecycle (not exposed as tools): `register`, `deregister`, `get_instructions`.
+Additionally, 3 MACP lifecycle operations are handled automatically by the plugin host and are not exposed as agent tools: `register`, `deregister`, and `get_instructions`.
 
 ## Channel bridge
 
@@ -200,7 +197,7 @@ Shows project ID, default channel, online agents, and bridge status.
 src/
 ├── index.ts      # Plugin entry — registers service, tools, hooks, command
 ├── service.ts    # MACPService — lifecycle, poll loop, context injection
-├── tools.ts      # All 47 tool registrations
+├── tools.ts      # 42 exposed tool registrations
 ├── bridge.ts     # MACPChannelBridge — messaging platforms → MACP bus
 └── types.ts      # PluginConfig, AgentSession, OpenClaw API types
 
