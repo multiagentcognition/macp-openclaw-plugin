@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { SenderInfo } from 'macp-mcp';
+import type { Priority, SenderInfo } from 'macp-mcp';
 import type { MACPService } from './service.js';
 import type { AgentSession } from './types.js';
 
@@ -19,14 +19,17 @@ import type { AgentSession } from './types.js';
 export class MACPChannelBridge {
   private service: MACPService;
   private session: AgentSession | null = null;
-  private bridgeChannelPriority: number;
+  private bridgeChannelPriority: Priority;
 
   private static readonly GATEWAY_AGENT_ID = 'openclaw-gateway';
   private static readonly BRIDGE_CHANNEL = 'bridge:human';
 
   constructor(service: MACPService, bridgeChannelPriority: number) {
     this.service = service;
-    this.bridgeChannelPriority = bridgeChannelPriority;
+    this.bridgeChannelPriority =
+      bridgeChannelPriority >= 0 && bridgeChannelPriority <= 3
+        ? (bridgeChannelPriority as Priority)
+        : 0;
   }
 
   // ── Lifecycle ────────────────────────────────────────────────

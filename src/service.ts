@@ -173,12 +173,10 @@ export class MACPService {
     if (deliveries.length === 0) return '';
 
     const lines = (deliveries as Array<Record<string, unknown>>).map((d) => {
-      const fromRaw = d.from_json;
-      const from =
-        typeof fromRaw === 'string' ? JSON.parse(fromRaw) : (fromRaw as Record<string, string>);
+      const from = d.from as Record<string, string> | undefined;
       const priorityNames = ['info', 'advisory', 'steering', 'interrupt'];
       const priority = priorityNames[d.priority as number] ?? 'info';
-      return `[${priority}] ${from.name}: ${d.content}`;
+      return `[${priority}] ${from?.name ?? 'unknown'}: ${String(d.content ?? '')}`;
     });
 
     return [
