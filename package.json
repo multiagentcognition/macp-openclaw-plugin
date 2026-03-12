@@ -1,0 +1,39 @@
+{
+  "name": "@macp/openclaw-plugin",
+  "version": "0.1.0",
+  "description": "Native MACP multi-agent coordination plugin for OpenClaw",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "openclaw": {
+    "extensions": ["./dist/index.js"]
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "macp-mcp": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "openclaw",
+    "macp",
+    "multi-agent",
+    "coordination",
+    "plugin",
+    "mcp"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/multiagentcognition/macp-openclaw-plugin"
+  }
+}

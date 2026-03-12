@@ -1,0 +1,65 @@
+{
+  "id": "macp-coordination",
+  "name": "MACP Multi-Agent Coordination",
+  "version": "0.1.0",
+  "description": "Native real-time coordination between OpenClaw agents and external IDE agents via the MACP protocol",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "projectId": {
+        "type": "string",
+        "description": "MACP project/workspace identifier"
+      },
+      "dbPath": {
+        "type": "string",
+        "description": "Path to shared SQLite DB. Defaults to ~/.macp/projects/{projectId}.macp.db"
+      },
+      "defaultChannel": {
+        "type": "string",
+        "default": "general",
+        "description": "Channel all agents auto-join on startup"
+      },
+      "pollIntervalMs": {
+        "type": "number",
+        "default": 5000,
+        "description": "How often to poll MACP bus for deliveries (ms)"
+      },
+      "autoPollInject": {
+        "type": "boolean",
+        "default": true,
+        "description": "Auto-inject MACP deliveries into agent context"
+      },
+      "bridgeChannels": {
+        "type": "boolean",
+        "default": false,
+        "description": "Forward messaging platform messages to MACP bus"
+      },
+      "bridgeChannelPriority": {
+        "type": "number",
+        "default": 0,
+        "description": "Priority for bridged messages (0=info, 1=advisory, 2=steering, 3=interrupt)"
+      }
+    },
+    "required": ["projectId"]
+  },
+  "skills": ["./skills/macp-coordination"],
+  "uiHints": {
+    "projectId": {
+      "label": "Project ID",
+      "placeholder": "my-project"
+    },
+    "dbPath": {
+      "label": "Database Path",
+      "placeholder": "~/.macp/projects/my-project.macp.db"
+    },
+    "defaultChannel": {
+      "label": "Default Channel",
+      "placeholder": "general"
+    },
+    "pollIntervalMs": {
+      "label": "Poll Interval (ms)",
+      "placeholder": "5000"
+    }
+  }
+}
