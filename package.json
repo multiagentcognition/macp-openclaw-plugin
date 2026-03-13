@@ -18,7 +18,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "verify": "npm run build && git diff --check && npm pack --dry-run"
   },
   "dependencies": {
     "macp-mcp": "2.1.0"

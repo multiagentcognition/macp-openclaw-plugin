@@ -10,6 +10,7 @@ Embeds the MACP protocol directly into the OpenClaw Gateway process, giving ever
 - current plugin line: `0.1.x` early release
 - tested against: `OpenClaw 2026.3.11`, `macp-mcp 2.1.0`
 - compatibility stance: pin the plugin version and validate against the tested OpenClaw line before upgrading
+- release smoke check: `npm run verify`
 
 ## Why this exists
 
