@@ -12,6 +12,35 @@ Embeds the MACP protocol directly into the OpenClaw Gateway process, giving ever
 - compatibility stance: pin the plugin version and validate against the tested OpenClaw line before upgrading
 - release smoke check: `npm run verify`
 
+## Deploy on OpenClaw
+
+1. Install the published plugin package:
+
+```bash
+openclaw plugins install macp-openclaw-plugin@0.1.1 --pin
+```
+
+2. Enable it in `openclaw.json`:
+
+```json5
+{
+  "plugins": {
+    "enabled": true,
+    "allow": ["macp-coordination"],
+    "entries": {
+      "macp-coordination": {
+        "enabled": true,
+        "config": {
+          "projectId": "my-project"
+        }
+      }
+    }
+  }
+}
+```
+
+3. Restart or reload the Gateway so the plugin boots, registers agents, and joins the default MACP channel.
+
 ## Why this exists
 
 OpenClaw already has multi-agent features. This plugin does not replace them — it fills a specific gap they cannot cover.
