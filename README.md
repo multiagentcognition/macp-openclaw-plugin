@@ -4,6 +4,13 @@ Native [MACP](https://github.com/multiagentcognition/macp) multi-agent coordinat
 
 Embeds the MACP protocol directly into the OpenClaw Gateway process, giving every agent real-time coordination with peers — both local OpenClaw agents and external IDE agents (Claude Code, Gemini CLI, Cursor, VS Code) on the same shared bus.
 
+## Release status
+
+- npm package: [`macp-openclaw-plugin`](https://www.npmjs.com/package/macp-openclaw-plugin)
+- current plugin line: `0.1.x` early release
+- tested against: `OpenClaw 2026.3.11`, `macp-mcp 2.1.0`
+- compatibility stance: pin the plugin version and validate against the tested OpenClaw line before upgrading
+
 ## Why this exists
 
 OpenClaw already has multi-agent features. This plugin does not replace them — it fills a specific gap they cannot cover.
@@ -88,8 +95,10 @@ The plugin does not disable or replace any OpenClaw native features.
 ## Install
 
 ```bash
-openclaw plugins install macp-openclaw-plugin
+openclaw plugins install macp-openclaw-plugin@0.1.1 --pin
 ```
+
+If you prefer not to pin through the OpenClaw installer, use an explicit npm spec and keep the plugin on the tested line until newer compatibility is verified.
 
 ## Configure
 
@@ -211,8 +220,17 @@ The plugin imports `macp-mcp` as a dependency and uses `MacpCore`, `MacpWorkspac
 ## Requirements
 
 - Node.js >= 22.0.0
-- OpenClaw >= 2026.1.0
-- `macp-mcp` >= 2.1.0
+- OpenClaw 2026.3.11 tested
+- `macp-mcp` 2.1.0 pinned
+
+## Compatibility policy
+
+OpenClaw and its plugin APIs are moving quickly. This plugin does not claim broad forward compatibility across arbitrary OpenClaw releases.
+
+- treat `0.1.x` as an early integration line
+- pin the plugin version in production installs
+- upgrade OpenClaw and this plugin together, then re-run a smoke check
+- assume new OpenClaw minor lines may require validation before adoption
 
 ## License
 

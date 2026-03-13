@@ -1,7 +1,7 @@
 {
   "id": "macp-coordination",
   "name": "MACP Multi-Agent Coordination",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Native real-time coordination between OpenClaw agents and external IDE agents via the MACP protocol",
   "configSchema": {
     "type": "object",

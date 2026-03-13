@@ -1,7 +1,7 @@
 ---
 name: macp-coordination
 description: Coordinate with other AI agents working on this project via the MACP protocol
-version: 0.1.0
+version: 0.1.1
 metadata:
   openclaw:
     requires:
